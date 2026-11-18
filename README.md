@@ -98,7 +98,35 @@ All numbers are **SI-SDR improvement (dB)** over the unprocessed mic signal. The
 
 1. Train on real multitracks (for example MUSDB18-HQ vocals plus stems) at 44.1/48 kHz, using measured wedge-to-mic impulse responses.
 2. Put the zero-latency notch suppressor in front of the network as a howl safety net, and fine-tune on its output.
-3. Distil to a smaller GRU and port the streaming loop to C++ (a JUCE plugin) to measure latency in a real audio callback.
+3. Distil to a smaller GRU and wrap the C++ streaming step in a JUCE plug-in to measure latency inside a real audio callback.
+
+## Deployment: C++ (LibTorch) and ONNX
+
+The 8 ms model is exported two ways (`python -m stagevox.export checkpoints/sep_w128.pt exports`):
+
+| Export | What it contains | Check against PyTorch |
+|---|---|---|
+| `exports/stream_step_w128.pt` (TorchScript) | One full streaming hop: framing, window, FFT, network, 3-tap deep filter, iFFT, overlap-add, with all state passed explicitly | Same output as `StreamingSeparator` to 6e-8 |
+| `exports/net_step_w128.onnx` (ONNX, opset 17) | The network step only (log-magnitude frame + conv/GRU state → complex filter taps) | Same taps to 1e-6 over 500 recurrent steps in ONNX Runtime |
+
+`cpp/stream_infer.cpp` is a C++ harness that uses the TorchScript step with no Python. It feeds audio one 4 ms hop at a time, as an audio callback would, and times each call.
+
+```bash
+bash cpp/build.sh
+./cpp/stream_infer exports/stream_step_w128.pt input.f32 output.f32 64   # raw float32, 16 kHz mono
+```
+
+Measured on 32 s of held-out real test audio (two runs, one CPU thread on the same 2-core cloud container):
+
+| Metric | C++ / LibTorch | Python (`StreamingSeparator`) |
+|---|---|---|
+| Per-hop compute, p50 | 0.22–0.26 ms | — |
+| Per-hop compute, p99 | 0.56–0.70 ms | 0.66 ms |
+| Real-time factor | 0.062–0.068 (about 15x faster than real time) | 0.104 (about 10x) |
+| Missed 4 ms deadlines | 0 of 7,950 hops | 0 |
+| Output vs PyTorch | max error 6e-8 | reference |
+
+The C++ output matches PyTorch to 6e-8. These are CPU timings in a shared container, not a real-time audio thread. A production plug-in would pin the thread and pre-allocate buffers (for example in JUCE).
 
 ## Reproduce
 
@@ -109,7 +137,9 @@ bash scripts/fetch_real_audio.sh ext/librosa-data          # held-out real music
 python scripts/make_dataset.py --real-audio ext/librosa-data/audio --speech <MS-SNSD>/clean_train --out data
 for w in 512 256 128; do python scripts/train.py --win $w --steps 5000; done
 python scripts/evaluate.py && python scripts/plot.py
-pytest -q                                                   # DSP, loop, causality and streaming tests
+python -m stagevox.export checkpoints/sep_w128.pt exports   # TorchScript + ONNX
+bash cpp/build.sh                                           # C++ streaming harness
+pytest -q                                                   # DSP, loop, causality, streaming and export tests
 ```
 
 The experiments ran on a 2-core CPU with no GPU. The 16 kHz sample rate and the small model were chosen to fit that budget.
@@ -122,8 +152,11 @@ stagevox/synth.py            source-filter singer + procedural band (drums, bass
 stagevox/scenes.py           bleed paths, closed-loop feedback with amp saturation, scene builder
 stagevox/model.py            causal deep-filtering separator + exact streaming implementation
 stagevox/notch_suppressor.py console-style howl detector + dynamic notch filters (baseline)
+stagevox/export.py           TorchScript streaming step + ONNX network export
+cpp/                         C++ (LibTorch) streaming inference harness with per-hop timing
+exports/                     exported 8 ms model (TorchScript, ONNX)
 scripts/                     dataset, training, evaluation, plots
-tests/                       DSP, feedback-loop, causality and streaming-equivalence tests
+tests/                       DSP, feedback-loop, causality, streaming-equivalence and export tests
 ```
 
 ## Data credits

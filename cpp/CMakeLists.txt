@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.18)
+project(stagevox_cpp CXX)
+set(CMAKE_CXX_STANDARD 20)
+find_package(Torch REQUIRED)
+add_executable(stream_infer stream_infer.cpp)
+target_link_libraries(stream_infer "${TORCH_LIBRARIES}")

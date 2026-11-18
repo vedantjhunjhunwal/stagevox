@@ -4,3 +4,5 @@ torch>=2.2
 soundfile>=0.12
 matplotlib>=3.8
 pytest>=8
+onnx>=1.16        # optional: ONNX export
+onnxruntime>=1.18 # optional: ONNX parity test / inference
