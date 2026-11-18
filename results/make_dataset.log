@@ -1,0 +1,1 @@
+done {'train.npz': (1600, 64000), 'test_real.npz': (54, 64000), 'test_synth.npz': (180, 64000), 'val.npz': (96, 64000)}

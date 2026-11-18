@@ -1,0 +1,5 @@
+data/
+ext/
+__pycache__/
+*.pyc
+.pytest_cache/
